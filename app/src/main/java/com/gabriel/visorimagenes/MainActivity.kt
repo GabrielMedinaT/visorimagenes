@@ -13,7 +13,10 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -112,7 +115,7 @@ fun PermissionRequestScreen(folderName: String) {
 fun MediaGrid(folderName: String) {
     val context = LocalContext.current
     var mediaList by remember { mutableStateOf(listOf<MediaItem>()) }
-    var selectedMedia by remember { mutableStateOf<MediaItem?>(null) }
+    var selectedMediaIndex by remember { mutableStateOf<Int?>(null) }
 
     // Cargar medios al inicio
     LaunchedEffect(folderName) {
@@ -127,13 +130,13 @@ fun MediaGrid(folderName: String) {
             Text("No se encontraron medios en la carpeta $folderName.")
         }
     } else {
-        if (selectedMedia != null) {
-            // Mostrar imagen o reproducir video
-            if (selectedMedia!!.isVideo) {
-                VideoPlayer(uri = selectedMedia!!.uri, onClose = { selectedMedia = null })
-            } else {
-                ImageViewer(uri = selectedMedia!!.uri, displayName = selectedMedia!!.displayName, onClose = { selectedMedia = null })
-            }
+        if (selectedMediaIndex != null) {
+            // Mostrar carrusel con medios seleccionados
+            MediaCarousel(
+                mediaList = mediaList,
+                startIndex = selectedMediaIndex!!,
+                onClose = { selectedMediaIndex = null }
+            )
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 128.dp),
@@ -143,7 +146,7 @@ fun MediaGrid(folderName: String) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(mediaList) { media ->
-                    MediaCard(mediaItem = media, onClick = { selectedMedia = media })
+                    MediaCard(mediaItem = media, onClick = { selectedMediaIndex = mediaList.indexOf(media) })
                 }
             }
         }
@@ -158,6 +161,112 @@ fun MediaCard(mediaItem: MediaItem, onClick: () -> Unit) {
             .aspectRatio(1f)
             .clickable(onClick = onClick),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        if (mediaItem.isVideo) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(
+                    painter = rememberAsyncImagePainter(mediaItem.uri),
+                    contentDescription = mediaItem.displayName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Text(
+                    text = "Video",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.align(androidx.compose.ui.Alignment.BottomStart)
+                )
+            }
+        } else {
+            Image(
+                painter = rememberAsyncImagePainter(mediaItem.uri),
+                contentDescription = mediaItem.displayName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
+fun MediaCarousel(mediaList: List<MediaItem>, startIndex: Int, onClose: () -> Unit) {
+    var currentIndex by remember { mutableStateOf(startIndex) }
+    var scaleFactor by remember { mutableStateOf(1f) }
+
+    Column(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Box(modifier = Modifier.weight(1f)) {
+            if (mediaList[currentIndex].isVideo) {
+                VideoPlayer(
+                    uri = mediaList[currentIndex].uri,
+                    onClose = onClose
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height((300 * scaleFactor).dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    ) {
+                        Image(
+                            painter = rememberAsyncImagePainter(mediaList[currentIndex].uri),
+                            contentDescription = mediaList[currentIndex].displayName,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Slider(
+                        value = scaleFactor,
+                        onValueChange = { scaleFactor = it },
+                        valueRange = 0.5f..3f,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+            }
+        }
+
+        LazyRow(
+            modifier = Modifier.padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(mediaList.size) { index ->
+                val media = mediaList[index]
+                MediaThumbnail(
+                    mediaItem = media,
+                    isSelected = index == currentIndex,
+                    onClick = { currentIndex = index }
+                )
+            }
+        }
+
+        Button(
+            onClick = onClose,
+            modifier = Modifier.align(androidx.compose.ui.Alignment.CenterHorizontally).padding(16.dp)
+        ) {
+            Text("Cerrar")
+        }
+    }
+}
+
+@Composable
+fun MediaThumbnail(mediaItem: MediaItem, isSelected: Boolean, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .size(100.dp)
+            .clickable(onClick = onClick),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 8.dp else 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
+        )
     ) {
         if (mediaItem.isVideo) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -204,47 +313,6 @@ fun VideoPlayer(uri: Uri, onClose: () -> Unit) {
                 .padding(16.dp)
         ) {
             Text("X")
-        }
-    }
-}
-
-@Composable
-fun ImageViewer(uri: Uri, displayName: String, onClose: () -> Unit) {
-    var scaleFactor by remember { mutableStateOf(1f) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height((300 * scaleFactor).dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-        ) {
-            Image(
-                painter = rememberAsyncImagePainter(uri),
-                contentDescription = displayName,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Slider(
-            value = scaleFactor,
-            onValueChange = { scaleFactor = it },
-            valueRange = 0.5f..3f,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = onClose) {
-            Text("Cerrar")
         }
     }
 }

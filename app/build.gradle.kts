@@ -59,4 +59,5 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.accompanist.permissions)
     implementation(libs.androidx.foundation)
+
 }
