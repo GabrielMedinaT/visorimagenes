@@ -6,6 +6,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -18,13 +20,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.rememberAsyncImagePainter
 import com.google.accompanist.permissions.*
 import android.os.Environment
 import java.io.File
 
-data class ImageItem(val uri: Uri, val displayName: String)
+data class MediaItem(val uri: Uri, val displayName: String, val isVideo: Boolean)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,7 +55,8 @@ fun PermissionRequestScreen(folderName: String) {
     // Define los permisos a solicitar según la versión de Android
     val permissions = if (sdkVersion >= android.os.Build.VERSION_CODES.TIRAMISU) {
         listOf(
-            Manifest.permission.READ_MEDIA_IMAGES
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO
         )
     } else {
         listOf(
@@ -72,7 +75,7 @@ fun PermissionRequestScreen(folderName: String) {
 
     when {
         hasAllPermissions -> {
-            ImageGrid(folderName = folderName)
+            MediaGrid(folderName = folderName)
         }
         permissionState.shouldShowRationale -> {
             Box(
@@ -82,7 +85,7 @@ fun PermissionRequestScreen(folderName: String) {
                 Column(
                     horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
                 ) {
-                    Text("Se requiere permiso para acceder a las imágenes.")
+                    Text("Se requiere permiso para acceder a los medios.")
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(onClick = { permissionState.launchMultiplePermissionRequest() }) {
                         Text("Solicitar Permiso")
@@ -106,66 +109,32 @@ fun PermissionRequestScreen(folderName: String) {
 }
 
 @Composable
-fun ImageGrid(folderName: String) {
+fun MediaGrid(folderName: String) {
     val context = LocalContext.current
-    var images by remember { mutableStateOf(listOf<ImageItem>()) }
-    var selectedImage by remember { mutableStateOf<ImageItem?>(null) } // Imagen seleccionada
-    var scaleFactor by remember { mutableStateOf(1f) } // Factor de escala
+    var mediaList by remember { mutableStateOf(listOf<MediaItem>()) }
+    var selectedMedia by remember { mutableStateOf<MediaItem?>(null) }
 
-    // Cargar las imágenes al inicio
+    // Cargar medios al inicio
     LaunchedEffect(folderName) {
-        images = getImagesFromFolder(context, folderName)
+        mediaList = getMediaFromFolder(context, folderName)
     }
 
-    if (images.isEmpty()) {
+    if (mediaList.isEmpty()) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = androidx.compose.ui.Alignment.Center
         ) {
-            Text("No se encontraron imágenes en la carpeta $folderName.")
+            Text("No se encontraron medios en la carpeta $folderName.")
         }
     } else {
-        if (selectedImage != null) {
-            // Mostrar la imagen seleccionada ampliada con slider
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
-            ) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height((200 * scaleFactor).dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-                ) {
-                    Image(
-                        painter = rememberAsyncImagePainter(selectedImage!!.uri),
-                        contentDescription = selectedImage!!.displayName,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-
-                // Slider para ajustar el tamaño
-                Spacer(modifier = Modifier.height(16.dp))
-                Slider(
-                    value = scaleFactor,
-                    onValueChange = { scaleFactor = it },
-                    valueRange = 0.5f..3f,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-
-                // Botón para cerrar la vista ampliada
-                FloatingActionButton(
-                    onClick = { selectedImage = null },
-                    modifier = Modifier.align(androidx.compose.ui.Alignment.End)
-                ) {
-                    Text("X")
-                }
+        if (selectedMedia != null) {
+            // Mostrar imagen o reproducir video
+            if (selectedMedia!!.isVideo) {
+                VideoPlayer(uri = selectedMedia!!.uri, onClose = { selectedMedia = null })
+            } else {
+                ImageViewer(uri = selectedMedia!!.uri, displayName = selectedMedia!!.displayName, onClose = { selectedMedia = null })
             }
         } else {
-            // Mostrar el grid de imágenes
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 128.dp),
                 contentPadding = PaddingValues(8.dp),
@@ -173,8 +142,8 @@ fun ImageGrid(folderName: String) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(images) { image ->
-                    ImageCard(imageItem = image, onClick = { selectedImage = image })
+                items(mediaList) { media ->
+                    MediaCard(mediaItem = media, onClick = { selectedMedia = media })
                 }
             }
         }
@@ -182,20 +151,101 @@ fun ImageGrid(folderName: String) {
 }
 
 @Composable
-fun ImageCard(imageItem: ImageItem, onClick: () -> Unit) {
+fun MediaCard(mediaItem: MediaItem, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .clickable(onClick = onClick), // Manejar clic
+            .clickable(onClick = onClick),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
-        Image(
-            painter = rememberAsyncImagePainter(imageItem.uri),
-            contentDescription = imageItem.displayName,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
+        if (mediaItem.isVideo) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(
+                    painter = rememberAsyncImagePainter(mediaItem.uri),
+                    contentDescription = mediaItem.displayName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Text(
+                    text = "Video",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.align(androidx.compose.ui.Alignment.BottomStart)
+                )
+            }
+        } else {
+            Image(
+                painter = rememberAsyncImagePainter(mediaItem.uri),
+                contentDescription = mediaItem.displayName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
+fun VideoPlayer(uri: Uri, onClose: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(factory = { context ->
+            VideoView(context).apply {
+                setVideoURI(uri)
+                setMediaController(MediaController(context).apply {
+                    setAnchorView(this@apply)
+                })
+                start()
+            }
+        }, modifier = Modifier.fillMaxSize())
+
+        FloatingActionButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(androidx.compose.ui.Alignment.TopEnd)
+                .padding(16.dp)
+        ) {
+            Text("X")
+        }
+    }
+}
+
+@Composable
+fun ImageViewer(uri: Uri, displayName: String, onClose: () -> Unit) {
+    var scaleFactor by remember { mutableStateOf(1f) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height((300 * scaleFactor).dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Image(
+                painter = rememberAsyncImagePainter(uri),
+                contentDescription = displayName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Slider(
+            value = scaleFactor,
+            onValueChange = { scaleFactor = it },
+            valueRange = 0.5f..3f,
+            modifier = Modifier.padding(horizontal = 16.dp)
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = onClose) {
+            Text("Cerrar")
+        }
     }
 }
 
@@ -210,37 +260,46 @@ fun ensureMyImagesDirectoryExists(): File {
     return myImagesDir
 }
 
-fun getImagesFromFolder(context: Context, folderName: String): List<ImageItem> {
-    val images = mutableListOf<ImageItem>()
-    val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+fun getMediaFromFolder(context: Context, folderName: String): List<MediaItem> {
+    val mediaList = mutableListOf<MediaItem>()
+
+    // Consultar imágenes
+    val imageUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    val videoUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+
     val projection = arrayOf(
-        MediaStore.Images.Media._ID,
-        MediaStore.Images.Media.DISPLAY_NAME,
-        MediaStore.Images.Media.RELATIVE_PATH
+        MediaStore.MediaColumns._ID,
+        MediaStore.MediaColumns.DISPLAY_NAME,
+        MediaStore.MediaColumns.RELATIVE_PATH
     )
-    val selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+
+    val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?"
     val selectionArgs = arrayOf("%Pictures/$folderName/%")
-    val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+    val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
 
-    val cursor = context.contentResolver.query(
-        uri,
-        projection,
-        selection,
-        selectionArgs,
-        sortOrder
-    )
-
-    cursor?.use {
-        val idColumn = it.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-        val nameColumn = it.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-
-        while (it.moveToNext()) {
-            val id = it.getLong(idColumn)
-            val name = it.getString(nameColumn)
-            val imageUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
-            images.add(ImageItem(uri = imageUri, displayName = name))
+    // Consultar imágenes
+    context.contentResolver.query(imageUri, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
+        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+        val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+        while (cursor.moveToNext()) {
+            val id = cursor.getLong(idColumn)
+            val name = cursor.getString(nameColumn)
+            val uri = ContentUris.withAppendedId(imageUri, id)
+            mediaList.add(MediaItem(uri, name, isVideo = false))
         }
     }
 
-    return images
+    // Consultar videos
+    context.contentResolver.query(videoUri, projection, selection, selectionArgs, sortOrder)?.use { cursor ->
+        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+        val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+        while (cursor.moveToNext()) {
+            val id = cursor.getLong(idColumn)
+            val name = cursor.getString(nameColumn)
+            val uri = ContentUris.withAppendedId(videoUri, id)
+            mediaList.add(MediaItem(uri, name, isVideo = true))
+        }
+    }
+
+    return mediaList
 }
